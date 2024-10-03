@@ -383,6 +383,7 @@ rwlock_release_read(struct rwlock * rwlock)
 	spinlock_acquire(&rwlock->rwlock_lock);
 
 	lock_acquire(rwlock->rwlock_reader_lock);
+	KASSERT(rwlock->rwlock_reader_locks != 0);
 	rwlock->rwlock_reader_locks -= 1;
 	if (rwlock->rwlock_reader_locks == 0) {
 		lock_release(rwlock->rwlock_global_lock);
