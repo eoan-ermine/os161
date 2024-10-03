@@ -152,8 +152,8 @@ void cv_broadcast(struct cv *cv, struct lock *lock);
 struct rwlock {
         char *rwlock_name;
         struct spinlock rwlock_lock;
-        lock *rwlock_reader_lock;
-        lock *rwlock_global_lock;
+        struct lock *rwlock_reader_lock;
+        struct lock *rwlock_global_lock;
         volatile int rwlock_reader_locks;
 };
 

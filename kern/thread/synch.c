@@ -172,6 +172,7 @@ void
 lock_destroy(struct lock *lock)
 {
 	KASSERT(lock != NULL);
+	KASSERT(lock->lk_owner == NULL);
 
 	/* wchan_cleanup will assert if anyone's waiting on it */
 	spinlock_cleanup(&lock->lk_lock);
@@ -223,7 +224,7 @@ bool
 lock_do_i_hold(struct lock *lock)
 {
 	KASSERT(lock != NULL);
-	KASSERT(curthread != NULL)
+	KASSERT(curthread != NULL);
 
 	spinlock_acquire(&lock->lk_lock);
 	bool result = (lock->lk_owner == curthread);
@@ -278,36 +279,37 @@ cv_destroy(struct cv *cv)
 void
 cv_wait(struct cv *cv, struct lock *lock)
 {
-	KASSERT(cv != NULL)
-	KASSERT(lock != NULL)
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
 
-	spinlock_acquire(cv->cv_lock);
+	spinlock_acquire(&cv->cv_lock);
 	lock_release(lock);
-	wchan_sleep(cv->cv_wchan, cv->cv_lock);
+	wchan_sleep(cv->cv_wchan, &cv->cv_lock);
+	spinlock_release(&cv->cv_lock);
 	lock_acquire(lock);
-	spinlock_release(cv->cv_lock);
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
-	KASSERT(cv != NULL)
-	KASSERT(lock != NULL)
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
 
-	spinlock_acquire(cv->cv_lock);
-	wchan_wakeone(cv->cv_wchan, cv->cv_lock);
-	spinlock_release(cv->cv_lock);
+	spinlock_acquire(&cv->cv_lock);
+	wchan_wakeone(cv->cv_wchan, &cv->cv_lock);
+	spinlock_release(&cv->cv_lock);
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
-	KASSERT(cv != NULL)
-	KASSERT(lock != NULL)
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
 
-	spinlock_acquire(cv->cv_lock);
-	wchan_wakeall(cv->cv_wchan, cv->cv_lock);
-	spinlock_release(cv->cv_lock);
+	spinlock_acquire(&cv->cv_lock);
+	KASSERT(lock_do_i_hold(lock));
+	wchan_wakeall(cv->cv_wchan, &cv->cv_lock);
+	spinlock_release(&cv->cv_lock);
 }
 
 struct rwlock *
@@ -327,21 +329,22 @@ rwlock_create(const char * name)
 	}
 
 	spinlock_init(&rwlock->rwlock_lock);
-	rwlock->rwlock_writer_lock = lock_create(name);
-	if (rwlock_writer_lock == NULL) {
+	rwlock->rwlock_reader_lock = lock_create(name);
+	if (rwlock->rwlock_reader_lock == NULL) {
 		kfree(rwlock->rwlock_name);
 		kfree(rwlock);
 		return NULL;
 	}
 
 	rwlock->rwlock_global_lock = lock_create(name);
-	if (rwlock_global_lock == NULL) {
+	if (rwlock->rwlock_global_lock == NULL) {
 		kfree(rwlock->rwlock_name);
 		kfree(rwlock);
 		return NULL;
 	}
 
 	rwlock->rwlock_reader_locks = 0;
+	return rwlock;
 }
 
 void
@@ -349,7 +352,7 @@ rwlock_destroy(struct rwlock * rwlock)
 {
 	KASSERT(rwlock != NULL);
 
-	free(rwlock->rwlock_name);
+	kfree(rwlock->rwlock_name);
 	lock_destroy(rwlock->rwlock_reader_lock);
 	lock_destroy(rwlock->rwlock_global_lock);
 	kfree(rwlock);
@@ -360,16 +363,16 @@ rwlock_acquire_read(struct rwlock * rwlock)
 {
 	KASSERT(rwlock != NULL);
 
-	spinlock_acquire(rwlock->rwlock_lock);
+	spinlock_acquire(&rwlock->rwlock_lock);
 
 	lock_acquire(rwlock->rwlock_reader_lock);
-	rwlock->rwlock_reader_locks += 1
+	rwlock->rwlock_reader_locks += 1;
 	if (rwlock->rwlock_reader_locks == 1) {
 		lock_acquire(rwlock->rwlock_global_lock);
 	}
 	lock_release(rwlock->rwlock_reader_lock);
 
-	spinlock_release(rwlock->rwlock_lock);
+	spinlock_release(&rwlock->rwlock_lock);
 }
 
 void
@@ -377,7 +380,7 @@ rwlock_release_read(struct rwlock * rwlock)
 {
 	KASSERT(rwlock != NULL);
 
-	spinlock_acquire(rwlock->rwlock_lock);
+	spinlock_acquire(&rwlock->rwlock_lock);
 
 	lock_acquire(rwlock->rwlock_reader_lock);
 	rwlock->rwlock_reader_locks -= 1;
@@ -386,7 +389,7 @@ rwlock_release_read(struct rwlock * rwlock)
 	}
 	lock_release(rwlock->rwlock_reader_lock);
 
-	spinlock_release(rwlock->rwlock_lock);
+	spinlock_release(&rwlock->rwlock_lock);
 }
 
 void
@@ -394,10 +397,10 @@ rwlock_acquire_write(struct rwlock * rwlock)
 {
 	KASSERT(rwlock != NULL);
 
-	spinlock_acquire(rwlock->rwlock_lock);
+	spinlock_acquire(&rwlock->rwlock_lock);
 	KASSERT(rwlock->rwlock_reader_locks == 0);
 	lock_acquire(rwlock->rwlock_global_lock);
-	spinlock_release(rwlock->rwlock_lock);
+	spinlock_release(&rwlock->rwlock_lock);
 }
 
 void
@@ -405,7 +408,7 @@ rwlock_release_write(struct rwlock * rwlock)
 {
 	KASSERT(rwlock != NULL);
 
-	spinlock_acquire(rwlock->rwlock_lock);
+	spinlock_acquire(&rwlock->rwlock_lock);
 	lock_release(rwlock->rwlock_global_lock);
-	spinlock_release(rwlock->rwlock_lock);
+	spinlock_release(&rwlock->rwlock_lock);
 }
